@@ -3,7 +3,7 @@ name: Sync World Cup Results
 on:
   schedule:
     # Cada 10 minutos
-    - cron: '*/10 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:  # Permite ejecutar manualmente desde GitHub
 
 jobs:
