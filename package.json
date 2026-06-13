@@ -1,0 +1,9 @@
+{
+  "name": "porra-sync",
+  "version": "1.0.0",
+  "description": "Sync World Cup 2026 results to Firebase",
+  "main": "sync.js",
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}
