@@ -1,30 +1,48 @@
-name: Sync World Cup Results
+name: Sync Results
 
 on:
+  workflow_dispatch:        # permite lanzarlo a mano
   schedule:
-    # Cada 10 minutos
-    - cron: '*/5 * * * *'
-  workflow_dispatch:  # Permite ejecutar manualmente desde GitHub
+    # Solo sirve para REINICIAR el bucle si se ha parado.
+    # Cada ejecución cubre ~5h40m sincronizando por dentro, así que
+    # con que el cron acierte una vez cada ~5h es suficiente.
+    - cron: '*/15 * * * *'
+
+# Garantiza que solo corre UN bucle a la vez. Los disparos extra del
+# cron mientras el bucle está activo se quedan en espera o se descartan,
+# y arranca uno nuevo en cuanto el anterior termina.
+concurrency:
+  group: sync-loop
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 350      # ~5h50m (el máximo de GitHub es 6h)
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      
+          node-version: '22'
+
       - name: Install dependencies
         run: npm install
-      
-      - name: Run sync
-        run: node sync.js
+
+      - name: Bucle de sincronizacion (cada 2 min durante ~5h40m)
         env:
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          END=$((SECONDS + 20400))
+          N=0
+          while [ $SECONDS -lt $END ]; do
+            N=$((N+1))
+            echo "----- Sync #$N ($(date -u '+%H:%M:%S') UTC) -----"
+            node sync.js || echo "sync fallo, reintento en 2 min"
+            sleep 120
+          done
+          echo "Bucle terminado; el cron arrancara uno nuevo."
