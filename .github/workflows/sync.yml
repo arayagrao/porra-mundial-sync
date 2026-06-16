@@ -1,16 +1,11 @@
 name: Sync Results
 
 on:
-  workflow_dispatch:        # permite lanzarlo a mano
+  workflow_dispatch:        # lanzar a mano
   schedule:
-    # Solo sirve para REINICIAR el bucle si se ha parado.
-    # Cada ejecución cubre ~5h40m sincronizando por dentro, así que
-    # con que el cron acierte una vez cada ~5h es suficiente.
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'  # RED DE SEGURIDAD por si la cadena se rompe
 
-# Garantiza que solo corre UN bucle a la vez. Los disparos extra del
-# cron mientras el bucle está activo se quedan en espera o se descartan,
-# y arranca uno nuevo en cuanto el anterior termina.
+# Solo un bucle a la vez (evita que el relevo y el cron se solapen)
 concurrency:
   group: sync-loop
   cancel-in-progress: false
@@ -18,7 +13,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 350      # ~5h50m (el máximo de GitHub es 6h)
+    timeout-minutes: 350
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,18 +26,25 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Bucle de sincronizacion (cada 2 min durante ~5h40m)
+      - name: Bucle de sincronizacion (cada 2 min durante ~5h)
         env:
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          END=$((SECONDS + 20400))
+          END=$((SECONDS + 18000))
           N=0
           while [ $SECONDS -lt $END ]; do
             N=$((N+1))
             echo "----- Sync #$N ($(date -u '+%H:%M:%S') UTC) -----"
-            node sync.js || echo "sync fallo, reintento en 2 min"
+            node sync.js || echo "sync fallo, sigo"
             sleep 120
           done
-          echo "Bucle terminado; el cron arrancara uno nuevo."
+
+      # El propio bucle relanza al siguiente ANTES de morir. Esto NO depende
+      # del cron de GitHub, por eso es fiable. Necesita el secreto LOOP_PAT.
+      - name: Relanzar el bucle (relevo)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_PAT }}
+        run: gh workflow run sync.yml --ref ${{ github.ref_name }}
