@@ -3,9 +3,11 @@ name: Sync Results
 on:
   workflow_dispatch:        # lanzar a mano
   schedule:
-    - cron: '*/30 * * * *'  # RED DE SEGURIDAD por si la cadena se rompe
+    - cron: '*/30 * * * *'  # red de seguridad adicional, ya no es la pieza clave
 
-# Solo un bucle a la vez (evita que el relevo y el cron se solapen)
+# Solo un bucle a la vez. Si ya hay uno en marcha, el siguiente disparo se
+# queda EN COLA (no se cancela, no se duplica) y arranca solo en cuanto
+# el actual termine, sea por éxito, fallo o corte brusco del runner.
 concurrency:
   group: sync-loop
   cancel-in-progress: false
@@ -13,10 +15,22 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 350      # ~5h50m (el máximo de GitHub es 6h)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # CLAVE: se encola el SIGUIENTE relevo nada más empezar, no al final.
+      # Así, aunque este bucle muera de golpe a mitad (corte de red del
+      # runner, sin memoria, fallo de GitHub...) y nunca llegue al último
+      # paso, ya hay un relevo esperando en cola listo para arrancar en
+      # cuanto este termine. Si falla (token caducado, etc.) no bloquea
+      # el resto del job gracias a continue-on-error.
+      - name: Encolar el relevo (nada más empezar)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_PAT }}
+        run: gh workflow run sync.yml --ref ${{ github.ref_name }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -26,25 +40,27 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Bucle de sincronizacion (cada 2 min durante ~5h)
+      - name: Bucle de sincronizacion (cada 2 min durante ~5h40m)
         env:
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          END=$((SECONDS + 18000))
+          END=$((SECONDS + 20400))
           N=0
           while [ $SECONDS -lt $END ]; do
             N=$((N+1))
             echo "----- Sync #$N ($(date -u '+%H:%M:%S') UTC) -----"
-            node sync.js || echo "sync fallo, sigo"
+            node sync.js || echo "sync fallo, reintento en 2 min"
             sleep 120
           done
+          echo "Bucle terminado; el relevo ya esta en cola desde el principio."
 
-      # El propio bucle relanza al siguiente ANTES de morir. Esto NO depende
-      # del cron de GitHub, por eso es fiable. Necesita el secreto LOOP_PAT.
-      - name: Relanzar el bucle (relevo)
+      # Segunda red de seguridad por si el relevo del principio no se
+      # llegó a encolar bien (p.ej. token caducado en ese momento puntual).
+      - name: Relanzar el bucle (segundo intento, por si acaso)
         if: always()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.LOOP_PAT }}
         run: gh workflow run sync.yml --ref ${{ github.ref_name }}
