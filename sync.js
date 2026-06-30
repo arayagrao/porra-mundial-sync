@@ -57,7 +57,12 @@ async function fetchComp(comp) {
       status: m.status,
       home: { name: m.homeTeam?.name || 'TBD', tla: m.homeTeam?.tla || null, crest: m.homeTeam?.crest || null },
       away: { name: m.awayTeam?.name || 'TBD', tla: m.awayTeam?.tla || null, crest: m.awayTeam?.crest || null },
-      score: hasScore ? { home: homeScore, away: awayScore } : null
+      score: hasScore ? {
+        home: homeScore, away: awayScore,
+        winner: m.score?.winner || null,           // HOME_TEAM | AWAY_TEAM | DRAW
+        duration: m.score?.duration || 'REGULAR',  // REGULAR | EXTRA_TIME | PENALTY_SHOOTOUT
+        penalties: m.score?.penalties || null       // {home:N, away:N} si hubo tanda
+      } : null
     };
 
     if (hasScore) withScore++;
