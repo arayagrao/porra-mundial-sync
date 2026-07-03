@@ -44,15 +44,26 @@ async function fetchComp(comp) {
   let withScore = 0;
 
   for (const m of data.matches || []) {
-    const homeScore = m.score?.fullTime?.home;
-    const awayScore = m.score?.fullTime?.away;
+    // football-data.org: fullTime puede incluir goles de penaltis.
+    // Si hay regularTime (90 min) + extraTime, usamos eso como marcador real.
+    const isPenSO = m.score?.duration === 'PENALTY_SHOOTOUT';
+    const rt = m.score?.regularTime;
+    const et = m.score?.extraTime;
+    let homeScore, awayScore;
+    if (isPenSO && rt && rt.home != null) {
+      homeScore = rt.home + (et?.home || 0);
+      awayScore = rt.away + (et?.away || 0);
+    } else {
+      homeScore = m.score?.fullTime?.home;
+      awayScore = m.score?.fullTime?.away;
+    }
     const hasScore = homeScore != null && awayScore != null;
 
     matches[m.id] = {
       id: m.id,
       stage: m.stage || null,
       group: m.group || null,
-      matchday: m.matchday || null,   // jornada (ligas)
+      matchday: m.matchday || null,
       utcDate: m.utcDate,
       status: m.status,
       home: { name: m.homeTeam?.name || 'TBD', tla: m.homeTeam?.tla || null, crest: m.homeTeam?.crest || null },
@@ -62,8 +73,7 @@ async function fetchComp(comp) {
         winner: m.score?.winner || null,
         duration: m.score?.duration || 'REGULAR',
         penalties: m.score?.penalties || null,
-        regularTime: m.score?.regularTime || null,
-        extraTime: m.score?.extraTime || null
+        halfTime: m.score?.halfTime || null
       } : null
     };
 
