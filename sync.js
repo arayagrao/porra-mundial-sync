@@ -59,9 +59,11 @@ async function fetchComp(comp) {
       away: { name: m.awayTeam?.name || 'TBD', tla: m.awayTeam?.tla || null, crest: m.awayTeam?.crest || null },
       score: hasScore ? {
         home: homeScore, away: awayScore,
-        winner: m.score?.winner || null,           // HOME_TEAM | AWAY_TEAM | DRAW
-        duration: m.score?.duration || 'REGULAR',  // REGULAR | EXTRA_TIME | PENALTY_SHOOTOUT
-        penalties: m.score?.penalties || null       // {home:N, away:N} si hubo tanda
+        winner: m.score?.winner || null,
+        duration: m.score?.duration || 'REGULAR',
+        penalties: m.score?.penalties || null,
+        regularTime: m.score?.regularTime || null,
+        extraTime: m.score?.extraTime || null
       } : null
     };
 
