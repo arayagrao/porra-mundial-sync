@@ -1,7 +1,4 @@
-// sync.js - Sincroniza resultados de varias competiciones desde football-data.org a Firebase
-// Se ejecuta automáticamente vía GitHub Actions
-// Competiciones: Mundial (WC), La Liga (PD), Champions League (CL)
-
+// sync.js - Sincroniza resultados desde football-data.org a Firebase
 const admin = require('firebase-admin');
 
 const FOOTBALL_API_KEY = process.env.FOOTBALL_API_KEY;
@@ -19,44 +16,31 @@ admin.initializeApp({
   databaseURL: FIREBASE_DATABASE_URL
 });
 
-// Competiciones a sincronizar: código API -> nodo Firebase
 const COMPS = [
-  { code: 'WC', path: 'wc2026' },   // Mundial 2026
-  { code: 'PD', path: 'laliga' },   // La Liga (Primera División)
-  { code: 'CL', path: 'champions' } // Champions League
+  { code: 'WC', path: 'wc2026' },
+  { code: 'PD', path: 'laliga' },
+  { code: 'CL', path: 'champions' }
 ];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function fetchComp(comp) {
-  const res = await fetch(`https://api.football-data.org/v4/competitions/${comp.code}/matches`, {
-    headers: { 'X-Auth-Token': FOOTBALL_API_KEY }
-  });
+const apiFetch = (url) => fetch(url, { headers: { 'X-Auth-Token': FOOTBALL_API_KEY } });
 
+async function fetchComp(comp) {
+  const res = await apiFetch(`https://api.football-data.org/v4/competitions/${comp.code}/matches`);
   if (!res.ok) {
-    const text = await res.text();
-    console.error(`⚠️  ${comp.code} API error: ${res.status} ${text.slice(0,200)}`);
+    console.error(`⚠️  ${comp.code} API error: ${res.status} ${(await res.text()).slice(0,200)}`);
     return { ok: false };
   }
 
   const data = await res.json();
   const matches = {};
   let withScore = 0;
+  const penaltyIds = [];
 
   for (const m of data.matches || []) {
-    // football-data.org: fullTime puede incluir goles de penaltis.
-    // Si hay regularTime (90 min) + extraTime, usamos eso como marcador real.
-    const isPenSO = m.score?.duration === 'PENALTY_SHOOTOUT';
-    const rt = m.score?.regularTime;
-    const et = m.score?.extraTime;
-    let homeScore, awayScore;
-    if (isPenSO && rt && rt.home != null) {
-      homeScore = rt.home + (et?.home || 0);
-      awayScore = rt.away + (et?.away || 0);
-    } else {
-      homeScore = m.score?.fullTime?.home;
-      awayScore = m.score?.fullTime?.away;
-    }
+    const homeScore = m.score?.fullTime?.home;
+    const awayScore = m.score?.fullTime?.away;
     const hasScore = homeScore != null && awayScore != null;
 
     matches[m.id] = {
@@ -78,6 +62,31 @@ async function fetchComp(comp) {
     };
 
     if (hasScore) withScore++;
+    if (m.score?.duration === 'PENALTY_SHOOTOUT') penaltyIds.push(m.id);
+  }
+
+  // Partidos de penaltis: el endpoint bulk mete goles de penaltis en fullTime.
+  // Refetch individual para obtener regularTime + extraTime (marcador real).
+  for (const pid of penaltyIds) {
+    await sleep(1200);
+    try {
+      const dr = await apiFetch(`https://api.football-data.org/v4/matches/${pid}`);
+      if (!dr.ok) continue;
+      const d = await dr.json();
+      const rt = d.score?.regularTime;
+      const et = d.score?.extraTime;
+      const pen = d.score?.penalties;
+      if (rt && rt.home != null) {
+        const realHome = rt.home + (et?.home || 0);
+        const realAway = rt.away + (et?.away || 0);
+        matches[pid].score.home = realHome;
+        matches[pid].score.away = realAway;
+        if (pen) matches[pid].score.penalties = pen;
+        console.log(`  🔄 ${pid}: penaltis corregido ${realHome}-${realAway} (pen. ${pen?.home||'?'}-${pen?.away||'?'})`);
+      }
+    } catch (e) {
+      console.warn(`  ⚠️ Refetch ${pid}:`, e.message);
+    }
   }
 
   const db = admin.database();
@@ -89,7 +98,7 @@ async function fetchComp(comp) {
     currentMatchday: data.competition?.currentSeason?.currentMatchday || null
   });
 
-  console.log(`✅ ${comp.code} -> ${comp.path}: ${Object.keys(matches).length} partidos (${withScore} con resultado)`);
+  console.log(`✅ ${comp.code} -> ${comp.path}: ${Object.keys(matches).length} partidos (${withScore} con resultado, ${penaltyIds.length} penaltis)`);
   return { ok: true, count: Object.keys(matches).length };
 }
 
@@ -104,7 +113,6 @@ async function sync() {
     } catch (e) {
       console.error(`⚠️  Error en ${COMPS[i].code}:`, e.message);
     }
-    // Respeta el límite de 10 req/min: espera 7s entre competiciones
     if (i < COMPS.length - 1) await sleep(7000);
   }
 
